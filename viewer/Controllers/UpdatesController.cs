@@ -2,15 +2,13 @@ using Azure.Messaging;
 using Azure.Messaging.EventGrid;
 using Azure.Messaging.EventGrid.SystemEvents;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using viewer.Hubs;
+using viewer.Service;
 
 namespace viewer.Controllers
 {
@@ -25,12 +23,11 @@ namespace viewer.Controllers
             => HttpContext.Request.Headers["aeg-event-type"].FirstOrDefault() ==
                "Notification";
 
-        private readonly IHubContext<GridEventsHub> _hubContext;
-        private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
+        private readonly IEventGridEventHandler _eventGridEventHandler;
 
-        public UpdatesController(IHubContext<GridEventsHub> gridEventsHubContext)
+        public UpdatesController(IEventGridEventHandler eventGridEventHandler)
         {
-            this._hubContext = gridEventsHubContext;
+            _eventGridEventHandler = eventGridEventHandler;
         }
 
         [HttpOptions]
@@ -59,108 +56,28 @@ namespace viewer.Controllers
             {
                 var eventGridEvent = EventGridEvent.Parse(binaryData);
                 var subscriptionValidationEventData = eventGridEvent.Data.ToObjectFromJson<SubscriptionValidationEventData>();
-                var subscriptionValidationResponse = await HandleValidation(eventGridEvent, subscriptionValidationEventData);
+                var subscriptionValidationResponse = await _eventGridEventHandler.HandleValidation(eventGridEvent, subscriptionValidationEventData);
 
                 return Ok(subscriptionValidationResponse);
             }
             else if (EventTypeNotification)
             {
                 var document = JsonDocument.Parse(jsonContent);
-                if (IsCloudEvent(document.RootElement))
+                if (_eventGridEventHandler.IsCloudEvent(document.RootElement))
                 {
                     var cloudEvents = CloudEvent.ParseMany(binaryData);
-                    await HandleCloudEvent(cloudEvents);
+                    await _eventGridEventHandler.HandleCloudEvent(cloudEvents);
 
                     return Ok();
                 }
 
                 var eventGridevents = EventGridEvent.ParseMany(binaryData);
-                await HandleGridEvents(eventGridevents);
+                await _eventGridEventHandler.HandleGridEvents(eventGridevents);
 
                 return Ok();
             }
 
             return BadRequest();
-        }
-
-        /// <summary>
-        /// Proves endpoint ownership via echo of validation code.
-        /// Validation event has same body as Event Grid events.
-        /// </summary>
-        /// <param name="eventGridEvent">Event Grid event to publish metadata</param>
-        /// <param name="validationEventData">Validation event containing validation code</param>
-        /// <returns></returns>
-        private async Task<SubscriptionValidationResponse> HandleValidation(EventGridEvent eventGridEvent, SubscriptionValidationEventData validationEventData)
-        {
-            await this._hubContext.Clients.All.SendAsync(
-                "gridupdate",
-                eventGridEvent.Id,
-                eventGridEvent.EventType,
-                eventGridEvent.Subject,
-                eventGridEvent.EventTime,
-                JsonSerializer.Serialize(eventGridEvent, _jsonSerializerOptions));
-
-            return new SubscriptionValidationResponse
-            {
-                ValidationResponse = validationEventData.ValidationCode
-            };
-        }
-
-        /// <summary>
-        /// Publishes Event Grid events to the client.
-        /// </summary>
-        /// <param name="eventGridEvents">Events to be published</param>
-        private async Task HandleGridEvents(IEnumerable<EventGridEvent> eventGridEvents)
-        {
-            foreach (var eventGridEvent in eventGridEvents)
-            {
-                await this._hubContext.Clients.All.SendAsync(
-                    "gridupdate",
-                    eventGridEvent.Id,
-                    eventGridEvent.EventType,
-                    eventGridEvent.Subject,
-                    eventGridEvent.EventTime,
-                    JsonSerializer.Serialize(eventGridEvent, _jsonSerializerOptions));
-            }
-        }
-
-        /// <summary>
-        /// Publishes Cloud Event events to the client.
-        /// </summary>
-        /// <param name="cloudEvents">Events to be published</param>
-        private async Task HandleCloudEvent(IEnumerable<CloudEvent> cloudEvents)
-        {
-            foreach (var cloudEvent in cloudEvents)
-            {
-                await this._hubContext.Clients.All.SendAsync(
-                "gridupdate",
-                cloudEvent.Id,
-                cloudEvent.Type,
-                cloudEvent.Subject,
-                cloudEvent.Time,
-                JsonSerializer.Serialize(cloudEvent, _jsonSerializerOptions));
-            }
-        }
-
-        /// <summary>
-        /// Checks whether the event is of type <see cref="CloudEvent"/>. 
-        /// </summary>
-        /// <param name="jsonElement">The JSON element representation of the data</param>
-        /// <returns></returns>
-        private static bool IsCloudEvent(JsonElement jsonElement)
-        {
-            const string cloudEventProperty = "specversion";
-
-            try
-            {
-                return jsonElement.TryGetProperty(cloudEventProperty, out var _);
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine(e);
-            }
-
-            return false;
         }
     }
 }
