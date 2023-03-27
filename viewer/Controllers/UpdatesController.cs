@@ -17,19 +17,28 @@ namespace viewer.Controllers
     {
         private bool EventTypeSubcriptionValidation
             => HttpContext.Request.Headers["aeg-event-type"].FirstOrDefault() ==
-               "SubscriptionValidation";
+               EventTypes.SubscriptionValidation;
 
         private bool EventTypeNotification
             => HttpContext.Request.Headers["aeg-event-type"].FirstOrDefault() ==
-               "Notification";
+               EventTypes.Notification;
 
         private readonly IEventGridEventHandler _eventGridEventHandler;
 
+        /// <summary>
+        /// Constructor for DI.
+        /// </summary>
+        /// <param name="eventGridEventHandler"></param>
         public UpdatesController(IEventGridEventHandler eventGridEventHandler)
         {
             _eventGridEventHandler = eventGridEventHandler;
         }
 
+        /// <summary>
+        /// Endpoint validation request with CloudEvents v1.0.
+        /// See https://github.com/cloudevents/spec/blob/v1.0/http-webhook.md#4-abuse-protection
+        /// </summary>
+        /// <returns></returns>
         [HttpOptions]
         public IActionResult Options()
         {
@@ -45,6 +54,10 @@ namespace viewer.Controllers
             return Ok();
         }
 
+        /// <summary>
+        /// Event subscription endpoint.
+        /// Example: https://{{site-name}}.azurewebsites.net/api/updates
+        /// </summary>
         [HttpPost]
         public async Task<IActionResult> Post()
         {
@@ -71,8 +84,8 @@ namespace viewer.Controllers
                     return Ok();
                 }
 
-                var eventGridevents = EventGridEvent.ParseMany(binaryData);
-                await _eventGridEventHandler.HandleGridEvents(eventGridevents);
+                var eventGridEvents = EventGridEvent.ParseMany(binaryData);
+                await _eventGridEventHandler.HandleGridEvents(eventGridEvents);
 
                 return Ok();
             }
